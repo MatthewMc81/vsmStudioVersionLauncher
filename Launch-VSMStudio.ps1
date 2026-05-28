@@ -2,12 +2,6 @@
 
 try {  # outer catch — keeps window open on any startup or runtime error
 
-# Re-launch as Administrator if not already elevated
-if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
-    exit 0
-}
-
 $VersionsRoot  = 'D:\VSM\vsmStudio\Versions'
 $InstallTarget = 'D:\VSM\vsmStudio'
 $ExeName       = 'vsmStudio.exe'
@@ -80,6 +74,45 @@ public static class ConsoleInput {
 }
 '@
 
+# ---- startup prompt ----
+
+function Show-StartupPrompt {
+    $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+    if ($admin) { return $true }
+
+    [Console]::Clear()
+    Write-Host ''
+    Write-Host '  VSM Studio Version Launcher' -ForegroundColor Cyan
+    Write-Host ''
+    Write-Host '  This session is not running as Administrator.' -ForegroundColor Yellow
+    Write-Host ''
+    Write-Host '  Without admin rights you can still browse, extract, and launch' -ForegroundColor White
+    Write-Host '  versions — but you will not be able to kill a running vsmStudio.exe.' -ForegroundColor White
+    Write-Host '  If vsmStudio is open when you launch a version, extraction may fail' -ForegroundColor White
+    Write-Host '  because the exe file will be locked.' -ForegroundColor White
+    Write-Host ''
+    Write-Host '  -------------------------------------------------------' -ForegroundColor DarkGray
+    Write-Host ''
+    Write-Host '  [1]  Re-launch as Administrator  (UAC prompt)' -ForegroundColor Green
+    Write-Host '  [2]  Continue without admin' -ForegroundColor White
+    Write-Host '  [3]  Exit' -ForegroundColor DarkGray
+    Write-Host ''
+    Write-Host '  Press 1, 2, or 3 ...' -ForegroundColor DarkGray
+
+    while ($true) {
+        $k = [Console]::ReadKey($true)
+        switch ($k.KeyChar) {
+            '1' {
+                Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
+                exit 0
+            }
+            '2' { return $false }
+            '3' { exit 0 }
+        }
+    }
+}
+
 # ---- version enumeration ----
 
 function Get-VersionEntries {
@@ -137,7 +170,7 @@ function Render-Frame ($lines, $selectedIndex, [ref]$vtRef) {
     $wH    = [Console]::WindowHeight
     $wW    = [Console]::WindowWidth
     $avail = $wH - $HEADER_ROWS - 1
-    $p     = $wW - 1   # pad to wW-1 so explicit newline never causes double-advance
+    $p     = $wW - 1
 
     # Find selected render-line
     $selLine = -1
@@ -157,13 +190,21 @@ function Render-Frame ($lines, $selectedIndex, [ref]$vtRef) {
     [Console]::CursorVisible = $false
     [Console]::SetCursorPosition(0, $wTop)
 
-    # Fixed header
+    # Title — shows admin status on the right
+    $adminBadge  = if ($IsAdmin) { '  [Admin]' } else { '  [No Admin]' }
+    $titleLeft   = '  VSM Studio Version Launcher'
+    $titleLine   = ($titleLeft + $adminBadge).PadRight($p)
+    Write-Host $titleLeft -ForegroundColor Cyan -NoNewline
+    Write-Host $adminBadge.PadRight($p - $titleLeft.Length) -ForegroundColor $(if ($IsAdmin) { 'Green' } else { 'Yellow' })
+
+    # Hint line
     $hint = '  UP/DOWN navigate   ENTER launch   ESC quit   click=select   dbl-click=launch'
+    if (-not $IsAdmin) { $hint = '  [!] No admin: cannot kill running process   ' + $hint.TrimStart() }
     if ($vt -gt 0)                       { $hint = '[^] ' + $hint }
     if (($vt + $avail) -lt $lines.Count) { $hint = $hint + ' [v]' }
-
-    Write-Host "  VSM Studio Version Launcher".PadRight($p) -ForegroundColor Cyan
     Write-Host $hint.PadRight($p) -ForegroundColor DarkGray
+
+    # Blank separator
     Write-Host ''.PadRight($p)
 
     # Viewport slice
@@ -203,21 +244,42 @@ function Invoke-Launch ($zipPath) {
 
     $proc = Get-Process -Name 'vsmStudio' -ErrorAction SilentlyContinue
     if ($proc) {
-        Write-Host '  Stopping vsmStudio.exe...' -ForegroundColor Yellow
-        try {
-            Stop-Process -Id $proc.Id -Force -ErrorAction Stop
-            $proc.WaitForExit(5000) | Out-Null
-            Write-Host '  Stopped.' -ForegroundColor Green
-        } catch {
-            Write-Host "  ERROR: Cannot stop vsmStudio.exe: $_" -ForegroundColor Red
-            Write-Host '  Re-run this script as Administrator to kill a protected process.' -ForegroundColor Yellow
+        if ($IsAdmin) {
+            # Admin: kill the process
+            Write-Host '  Stopping vsmStudio.exe...' -ForegroundColor Yellow
+            try {
+                Stop-Process -Id $proc.Id -Force -ErrorAction Stop
+                $proc.WaitForExit(5000) | Out-Null
+                Write-Host '  Stopped.' -ForegroundColor Green
+            } catch {
+                Write-Host "  ERROR: Cannot stop vsmStudio.exe: $_" -ForegroundColor Red
+                Write-Host ''
+                Write-Host '  Extraction skipped. Press any key to return...'
+                [ConsoleInput]::Restore()
+                [Console]::ReadKey($true) | Out-Null
+                [ConsoleInput]::Init()
+                [Console]::CursorVisible = $false
+                return
+            }
+        } else {
+            # No admin: warn and let the user decide
+            Write-Host '  vsmStudio.exe is currently running.' -ForegroundColor Yellow
+            Write-Host '  Without admin rights it cannot be killed.' -ForegroundColor Yellow
+            Write-Host '  Extraction may fail if the exe file is locked.' -ForegroundColor Yellow
             Write-Host ''
-            Write-Host '  Extraction skipped. Press any key to return...'
-            [ConsoleInput]::Restore()
-            [Console]::ReadKey($true) | Out-Null
-            [ConsoleInput]::Init()
-            [Console]::CursorVisible = $false
-            return
+            Write-Host '  Continue anyway?  [Y] Yes   [N] Cancel' -ForegroundColor White
+            while ($true) {
+                $k = [Console]::ReadKey($true)
+                if ($k.Key -eq 'Y') { Write-Host '  Continuing...'; break }
+                if ($k.Key -eq 'N' -or $k.Key -eq 'Escape') {
+                    Write-Host '  Cancelled.' -ForegroundColor DarkGray
+                    Write-Host ''
+                    Write-Host '  Press any key to return...'
+                    [Console]::ReadKey($true) | Out-Null
+                    [Console]::CursorVisible = $false
+                    return
+                }
+            }
         }
     }
 
@@ -228,6 +290,9 @@ function Invoke-Launch ($zipPath) {
         Write-Host '  Done.' -ForegroundColor Green
     } catch {
         Write-Host "  ERROR: Extraction failed: $_" -ForegroundColor Red
+        if (-not $IsAdmin) {
+            Write-Host '  Tip: re-launch as Administrator so vsmStudio.exe can be killed first.' -ForegroundColor DarkGray
+        }
         Write-Host ''
         Write-Host '  Press any key to return...'
         [ConsoleInput]::Restore()
@@ -262,6 +327,9 @@ if (-not (Test-Path $VersionsRoot)) {
     Write-Host "ERROR: Versions folder not found: $VersionsRoot" -ForegroundColor Red
     exit 1
 }
+
+# Show startup prompt — sets $IsAdmin for the rest of the session
+$IsAdmin = Show-StartupPrompt
 
 $origBufH = [Console]::BufferHeight
 $origBufW = [Console]::BufferWidth
