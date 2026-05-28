@@ -6,6 +6,8 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     exit
 }
 
+try {  # outer catch — keeps window open on any startup or runtime error
+
 $VersionsRoot  = 'D:\VSM\vsmStudio\Versions'
 $InstallTarget = 'D:\VSM\vsmStudio'
 $ExeName       = 'vsmStudio.exe'
@@ -333,9 +335,28 @@ try {
         }
     }
 } finally {
-    [ConsoleInput]::Restore()
+    try { [ConsoleInput]::Restore() } catch { }
     [Console]::Clear()
     [Console]::CursorVisible = $true
     try { [Console]::BufferHeight = $origBufH } catch { }
     try { [Console]::BufferWidth  = $origBufW  } catch { }
+}
+
+} catch {  # outer catch
+    try { [ConsoleInput]::Restore() } catch { }
+    try { [Console]::CursorVisible = $true } catch { }
+    Write-Host ''
+    Write-Host '  *** UNHANDLED ERROR ***' -ForegroundColor Red
+    Write-Host ''
+    Write-Host "  $_" -ForegroundColor Red
+    Write-Host ''
+    Write-Host '  Script line:' -ForegroundColor DarkGray
+    Write-Host "  $($_.InvocationInfo.PositionMessage)" -ForegroundColor DarkGray
+    Write-Host ''
+    Write-Host '  Stack trace:' -ForegroundColor DarkGray
+    Write-Host "  $($_.ScriptStackTrace)" -ForegroundColor DarkGray
+    Write-Host ''
+    Write-Host '  Press any key to close...' -ForegroundColor Yellow
+    $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
+    exit 1
 }
