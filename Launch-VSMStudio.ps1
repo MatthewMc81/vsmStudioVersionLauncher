@@ -72,6 +72,48 @@ public static class ConsoleInput {
     public const uint   EF_DOUBLE = 0x0002;
     public const uint   EF_WHEEL  = 0x0004;
 }
+
+public static class RestartManager {
+    [DllImport("rstrtmgr.dll", CharSet = CharSet.Unicode)]
+    static extern int RmStartSession(out uint pSessionHandle, int dwSessionFlags, string strSessionKey);
+    [DllImport("rstrtmgr.dll")]
+    static extern int RmEndSession(uint pSessionHandle);
+    [DllImport("rstrtmgr.dll", CharSet = CharSet.Unicode)]
+    static extern int RmRegisterResources(uint pSessionHandle, uint nFiles, string[] rgsFilenames,
+        uint nApplications, RM_UNIQUE_PROCESS[] rgApplications, uint nServices, string[] rgsServiceNames);
+    [DllImport("rstrtmgr.dll")]
+    static extern int RmGetList(uint dwSessionHandle, out uint pnProcInfoNeeded, ref uint pnProcInfo,
+        RM_PROCESS_INFO[] rgAffectedApps, ref uint lpdwRebootReasons);
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct RM_UNIQUE_PROCESS { public int dwProcessId; public long ProcessStartTime; }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct RM_PROCESS_INFO {
+        public RM_UNIQUE_PROCESS Process;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)] public string strAppName;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 64)]  public string strServiceShortName;
+        public int ApplicationType; public uint AppStatus; public int TSSessionId;
+        [MarshalAs(UnmanagedType.Bool)] public bool bRestartable;
+    }
+
+    public static string[] WhoHasLocked(string path) {
+        uint handle;
+        if (RmStartSession(out handle, 0, Guid.NewGuid().ToString()) != 0) return new string[0];
+        try {
+            RmRegisterResources(handle, 1, new[] { path }, 0, null, 0, null);
+            uint needed = 0, count = 0, reasons = 0;
+            RmGetList(handle, out needed, ref count, null, ref reasons);
+            if (needed == 0) return new string[0];
+            var info = new RM_PROCESS_INFO[needed]; count = needed;
+            RmGetList(handle, out needed, ref count, info, ref reasons);
+            var names = new string[count];
+            for (uint i = 0; i < count; i++)
+                names[i] = info[i].strAppName + " (PID " + info[i].Process.dwProcessId + ")";
+            return names;
+        } finally { RmEndSession(handle); }
+    }
+}
 '@
 
 # ---- startup prompt ----
@@ -289,10 +331,28 @@ function Invoke-Launch ($zipPath) {
         Expand-Archive -Path $zipPath -DestinationPath $InstallTarget -Force -ErrorAction Stop
         Write-Host '  Done.' -ForegroundColor Green
     } catch {
-        Write-Host "  ERROR: Extraction failed: $_" -ForegroundColor Red
-        if (-not $IsAdmin) {
+        $errMsg = "$_"
+        Write-Host "  ERROR: Extraction failed: $errMsg" -ForegroundColor Red
+
+        # Identify which process has the file locked
+        if ($errMsg -match "'(.+?)' because it is being used by another process") {
+            $lockedFile = $Matches[1]
+            Write-Host "  Locked file: $(Split-Path $lockedFile -Leaf)" -ForegroundColor Red
+            try {
+                $lockers = [RestartManager]::WhoHasLocked($lockedFile)
+                if ($lockers.Count -gt 0) {
+                    Write-Host "  Locked by:   $($lockers -join ', ')" -ForegroundColor Yellow
+                    Write-Host '  Close the above application(s) and try again.' -ForegroundColor Yellow
+                } else {
+                    Write-Host '  Could not identify the locking process — close any open documents and try again.' -ForegroundColor Yellow
+                }
+            } catch {
+                Write-Host '  Could not identify the locking process — close any open documents and try again.' -ForegroundColor Yellow
+            }
+        } elseif (-not $IsAdmin) {
             Write-Host '  Tip: re-launch as Administrator so vsmStudio.exe can be killed first.' -ForegroundColor DarkGray
         }
+
         Write-Host ''
         Write-Host '  Press any key to return...'
         [ConsoleInput]::Restore()
