@@ -1,0 +1,7 @@
+# Editor
+.vscode/
+*.code-workspace
+
+# Build temp files
+*.pdb
+*.ilk

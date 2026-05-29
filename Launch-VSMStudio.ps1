@@ -2,6 +2,7 @@
 
 try {  # outer catch — keeps window open on any startup or runtime error
 
+$AppVersion    = '2.0'
 $VersionsRoot  = 'D:\VSM\vsmStudio\Versions'
 $InstallTarget = 'D:\VSM\vsmStudio'
 $ExeName       = 'vsmStudio.exe'
@@ -125,7 +126,7 @@ function Show-StartupPrompt {
 
     [Console]::Clear()
     Write-Host ''
-    Write-Host '  VSM Studio Version Launcher' -ForegroundColor Cyan
+    Write-Host "  VSM Studio Version Launcher  v$AppVersion" -ForegroundColor Cyan
     Write-Host ''
     Write-Host '  This session is not running as Administrator.' -ForegroundColor Yellow
     Write-Host ''
@@ -240,10 +241,9 @@ function Render-Frame ($lines, $selectedIndex, [ref]$vtRef) {
     [Console]::CursorVisible = $false
     [Console]::SetCursorPosition(0, $wTop)
 
-    # Title — shows admin status on the right
-    $adminBadge  = if ($IsAdmin) { '  [Admin]' } else { '  [No Admin]' }
-    $titleLeft   = '  VSM Studio Version Launcher'
-    $titleLine   = ($titleLeft + $adminBadge).PadRight($p)
+    # Title — shows version and admin status
+    $adminBadge = if ($IsAdmin) { '  [Admin]' } else { '  [No Admin]' }
+    $titleLeft  = "  VSM Studio Version Launcher  v$AppVersion"
     Write-Host $titleLeft -ForegroundColor Cyan -NoNewline
     Write-Host $adminBadge.PadRight($p - $titleLeft.Length) -ForegroundColor $(if ($IsAdmin) { 'Green' } else { 'Yellow' })
 
