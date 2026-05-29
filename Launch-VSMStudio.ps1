@@ -169,19 +169,23 @@ function Show-StartupPrompt {
 function Get-VersionEntries {
     $list = [System.Collections.Generic.List[PSCustomObject]]::new()
 
+    # Root-level zips first (newest to oldest) — these are typically the latest releases
+    $root = Get-ChildItem -Path $VersionsRoot -Filter '*.zip' -File |
+            Sort-Object LastWriteTime -Descending
+    if ($root.Count) {
+        $list.Add([PSCustomObject]@{ Type='header'; Label='Ungrouped'; Path=$null })
+        $root | ForEach-Object { $list.Add([PSCustomObject]@{ Type='item'; Label=$_.Name; Path=$_.FullName }) }
+    }
+
+    # Subfolders sorted newest to oldest — older groups (e.g. [DevelopmentBuilds]) fall to the bottom
     Get-ChildItem -Path $VersionsRoot -Directory -ErrorAction SilentlyContinue |
-      Sort-Object Name | ForEach-Object {
-        $zips = Get-ChildItem -Path $_.FullName -Filter '*.zip' -File | Sort-Object Name
+      Sort-Object LastWriteTime -Descending | ForEach-Object {
+        $zips = Get-ChildItem -Path $_.FullName -Filter '*.zip' -File |
+                Sort-Object LastWriteTime -Descending
         if ($zips.Count) {
             $list.Add([PSCustomObject]@{ Type='header'; Label=$_.Name; Path=$null })
             $zips | ForEach-Object { $list.Add([PSCustomObject]@{ Type='item'; Label=$_.Name; Path=$_.FullName }) }
         }
-    }
-
-    $root = Get-ChildItem -Path $VersionsRoot -Filter '*.zip' -File | Sort-Object Name
-    if ($root.Count) {
-        $list.Add([PSCustomObject]@{ Type='header'; Label='Ungrouped'; Path=$null })
-        $root | ForEach-Object { $list.Add([PSCustomObject]@{ Type='item'; Label=$_.Name; Path=$_.FullName }) }
     }
 
     return ,$list
