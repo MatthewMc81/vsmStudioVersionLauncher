@@ -146,7 +146,15 @@ function Show-StartupPrompt {
         $k = [Console]::ReadKey($true)
         switch ($k.KeyChar) {
             '1' {
-                Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
+                # Detect whether running as a compiled EXE or a plain .ps1
+                $currentExe = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+                if ($currentExe -match 'powershell(\.exe)?$|pwsh(\.exe)?$') {
+                    # Running as script — relaunch the .ps1 via powershell.exe
+                    Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
+                } else {
+                    # Running as compiled EXE — relaunch the EXE itself
+                    Start-Process $currentExe -Verb RunAs
+                }
                 exit 0
             }
             '2' { return $false }
